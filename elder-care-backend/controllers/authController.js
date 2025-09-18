@@ -13,6 +13,10 @@ exports.registerElder = async (req, res) => {
   try {
     const { name, age, phone, email, password } = req.body;
 
+    if (!name || !phone || !email || !password) {
+      return res.status(400).json({ msg: "Missing required fields" });
+    }
+
     // check if elder exists
     const existing = await Elder.findOne({ email });
     if (existing) return res.status(400).json({ msg: "Elder already exists" });
@@ -34,6 +38,10 @@ exports.registerRelative = async (req, res) => {
   try {
     const { name, phone, email, password } = req.body;
 
+    if (!name || !phone || !email || !password) {
+      return res.status(400).json({ msg: "Missing required fields" });
+    }
+
     const existing = await Relative.findOne({ email });
     if (existing) return res.status(400).json({ msg: "Relative already exists" });
 
@@ -54,18 +62,40 @@ exports.login = async (req, res) => {
   try {
     const { email, password, role } = req.body;
 
-    let user;
-    if (role === "elder") user = await Elder.findOne({ email });
-    else if (role === "relative") user = await Relative.findOne({ email });
+    if (!email || !password) {
+      return res.status(400).json({ msg: "Email and password are required" });
+    }
 
-    if (!user) return res.status(404).json({ msg: "User not found" });
+    let user = null;
+    let resolvedRole = role;
+
+    if (role === "elder") {
+      user = await Elder.findOne({ email });
+    } else if (role === "relative") {
+      user = await Relative.findOne({ email });
+    } else {
+      // Try to auto-detect role by searching both
+      user = await Elder.findOne({ email });
+      resolvedRole = user ? "elder" : null;
+      if (!user) {
+        user = await Relative.findOne({ email });
+        resolvedRole = user ? "relative" : null;
+      }
+    }
+
+    if (!user || !resolvedRole) {
+      return res.status(404).json({ msg: "User not found" });
+    }
 
     const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(400).json({ msg: "Invalid credentials" });
+    if (!match) {
+      return res.status(400).json({ msg: "Invalid credentials" });
+    }
 
     res.json({
-      token: generateToken(user._id, role),
+      token: generateToken(user._id, resolvedRole),
       user,
+      role: resolvedRole,
     });
   } catch (err) {
     res.status(500).json({ msg: err.message });

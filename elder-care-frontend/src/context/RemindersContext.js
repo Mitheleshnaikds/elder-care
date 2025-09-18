@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import api from "../services/api";
 
 const RemindersContext = createContext();
 
@@ -16,16 +17,93 @@ export const RemindersProvider = ({ children }) => {
   const [tick, setTick] = useState(0); // forces time-based recompute
   const lastNotifiedRef = useRef({}); // id -> yyyy-mm-dd
 
-  const addReminder = ({ medicine, time }) => {
-    const newReminder = { id: Date.now(), medicine, time };
-    setReminders((prev) => [newReminder, ...prev]);
-    return newReminder;
+  // Fetch medications from backend
+  const fetchMedications = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      
+      const response = await api.get("/elder/medications", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Convert backend data to frontend format
+      const medications = response.data.map(med => ({
+        id: med._id,
+        medicine: med.name,
+        time: med.time,
+        takenToday: med.takenToday,
+        takenAt: med.takenAt,
+        takenBy: med.takenBy
+      }));
+      
+      setReminders(medications);
+    } catch (err) {
+      console.error("Failed to fetch medications:", err);
+    }
   };
 
-  const removeReminder = (id) => {
+  useEffect(() => {
+    fetchMedications();
+  }, []);
+
+  const addReminder = async ({ medicine, time, dosage, instructions }) => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await api.post("/elder/medications", {
+        name: medicine,
+        time,
+        dosage,
+        instructions
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      const newReminder = {
+        id: response.data.medication._id,
+        medicine,
+        time,
+        takenToday: false
+      };
+      setReminders((prev) => [newReminder, ...prev]);
+      return newReminder;
+    } catch (err) {
+      console.error("Failed to add medication:", err);
+      // Fallback to local state
+      const newReminder = { id: Date.now(), medicine, time };
+      setReminders((prev) => [newReminder, ...prev]);
+      return newReminder;
+    }
+  };
+
+  const removeReminder = async (id) => {
+    try {
+      const token = localStorage.getItem("token");
+      await api.delete(`/elder/medications/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error("Failed to remove medication:", err);
+    }
+    
     setReminders((prev) => prev.filter((r) => r.id !== id));
     const map = lastNotifiedRef.current;
     delete map[id];
+  };
+
+  const markAsTaken = async (id) => {
+    try {
+      const token = localStorage.getItem("token");
+      await api.put(`/elder/medications/${id}/taken`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      setReminders((prev) => prev.map(r => 
+        r.id === id ? { ...r, takenToday: true, takenAt: new Date(), takenBy: "elder" } : r
+      ));
+    } catch (err) {
+      console.error("Failed to mark medication as taken:", err);
+    }
   };
 
   const requestPermission = async () => {
@@ -75,7 +153,7 @@ export const RemindersProvider = ({ children }) => {
 
   return (
     <RemindersContext.Provider
-      value={{ reminders, addReminder, removeReminder, requestPermission, nextReminder }}
+      value={{ reminders, addReminder, removeReminder, markAsTaken, requestPermission, nextReminder, fetchMedications }}
     >
       {children}
     </RemindersContext.Provider>
